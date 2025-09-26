@@ -1,0 +1,8 @@
+flask
+requests
+gpt4all
+flask-socketio==5.3.6
+python-socketio==5.10.0
+flask>=2.2
+gpt4all>=1.0.0  # pick a version that works for your environment; if v2 causes trouble try 1.0.12
+
