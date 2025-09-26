@@ -1,1 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Persona Chatbot — Meta-Llama 3.1</title>
+  <style>
+    /* Minimal, modern layout */
+    :root{
+      --bg:#0b1220;--card:#0f1724;--muted:#9aa7ba;--accent:#2563eb;--success:#10b981;--danger:#ef4444;
+      --glass: rgba(255,255,255,0.03);
+    }
+    *{box-sizing:border-box}
+    body{font-family:Inter,ui-sans-serif,system-ui; background:linear-gradient(180deg,#071024 0%,#0b1220 100%); color:#e6eef8; margin:0; padding:24px}
+    .wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:320px 1fr;gap:20px;min-height:80vh}
+    .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    .logo{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+    .logo h1{font-size:20px;margin:0}
+    .status{margin-bottom:14px}
+    .status .row{display:flex;justify-content:space-between;padding:8px 10px;border-radius:8px;background:var(--glass);margin-bottom:8px}
+    textarea,input{width:100%;border-radius:8px;padding:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    button{background:var(--accent);color:white;border:0;padding:10px 14px;border-radius:8px;cursor:pointer}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    .chatwrap{display:flex;flex-direction:column;height:calc(80vh - 40px)}
+    .messages{flex:1;overflow:auto;padding:18px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent)}
+    .msg{padding:12px;border-radius:10px;margin-bottom:10px;max-width:80%}
+    .msg.user{margin-left:auto;background:linear-gradient(90deg,var(--accent),#1e63d6);color:white}
+    .msg.bot{background:rgba(255,255,255,0.03);color:var(--muted)}
+    .msg.meta{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .inputrow{display:flex;gap:10px;margin-top:12px}
+    .inputrow textarea{flex:1;min-height:56px;max-height:140px;resize:vertical}
+    .typing{font-style:italic;color:var(--muted);padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.02);margin-top:8px}
+    .small{font-size:13px;color:var(--muted)}
+    @media (max-width:900px){.wrap{grid-template-columns:1fr}.logo h1{font-size:18px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- Sidebar -->
+    <div class="card">
+      <div class="logo">
+        <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(180deg,#7dd3fc,#60a5fa);display:flex;align-items:center;justify-content:center;color:#07203a;font-weight:700">AI</div>
+        <div>
+          <h1>Persona Chatbot</h1>
+          <div class="small">Meta-Llama 3.1 (local)</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <div class="row"><div>Model Status</div><div id="modelStatus" class="small">Checking...</div></div>
+        <div class="row"><div>File</div><div id="fileStatus" class="small">Checking...</div></div>
+        <div class="row"><div>Size</div><div id="sizeStatus" class="small">-</div></div>
+      </div>
+
+      <div>
+        <div class="small">Persona</div>
+        <textarea id="personaInput" rows="4">You are a helpful, friendly AI assistant that acts as a professional career tutor. Provide clear, step-by-step answers with examples when helpful.</textarea>
+        <div class="controls">
+          <button id="setPersonaBtn">Set Persona</button>
+          <button id="clearBtn" class="secondary">Clear</button>
+        </div>
+      </div>
+
+      <hr style="border:none;height:1px;background:rgba(255,255,255,0.02);margin:12px 0">
+
+      <div class="small">Controls</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="refreshBtn" class="secondary">Refresh Status</button>
+        <button id="exportBtn" class="secondary">Export Chat</button>
+      </div>
+    </div>
+
+    <!-- Chat area -->
+    <div class="card chatwrap">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div><strong>Chat</strong></div>
+        <div id="msgCount" class="small">Messages: 0</div>
+      </div>
+
+      <div id="messages" class="messages">
+        <div class="msg bot message-system">
+          <div class="msg.meta">System</div>
+          <div class="small">Loading model status…</div>
+        </div>
+      </div>
+
+      <div id="typing" class="typing" style="display:none">AI is thinking…</div>
+
+      <div class="inputrow">
+        <textarea id="inputText" placeholder="Type a message (Enter to send, Shift+Enter for newline)" disabled></textarea>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button id="sendBtn" disabled>Send</button>
+          <button id="stopBtn" class="secondary" style="display:none">Stop</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function api(path, opts) {
+      const r = await fetch(path, opts);
+      const json = await r.json().catch(()=>({}));
+      return { ok: r.ok, status: r.status, json };
+    }
+
+    const UI = {
+      el: {
+        messages: document.getElementById('messages'),
+        input: document.getElementById('inputText'),
+        send: document.getElementById('sendBtn'),
+        personaInput: document.getElementById('personaInput'),
+        setPersonaBtn: document.getElementById('setPersonaBtn'),
+        clearBtn: document.getElementById('clearBtn'),
+        refreshBtn: document.getElementById('refreshBtn'),
+        exportBtn: document.getElementById('exportBtn'),
+        modelStatus: document.getElementById('modelStatus'),
+        fileStatus: document.getElementById('fileStatus'),
+        sizeStatus: document.getElementById('sizeStatus'),
+        typing: document.getElementById('typing'),
+        msgCount: document.getElementById('msgCount')
+      },
+
+      async init() {
+        this.attach();
+        await this.refreshStatus();
+        await this.loadHistory();
+      },
+
+      attach() {
+        this.el.send.onclick = ()=>this.send();
+        this.el.setPersonaBtn.onclick = ()=>this.setPersona();
+        this.el.clearBtn.onclick = ()=>this.clear();
+        this.el.refreshBtn.onclick = ()=>this.refreshStatus();
+        this.el.exportBtn.onclick = ()=>this.exportChat();
+
+        this.el.input.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault(); this.send();
+          }
+        });
+      },
+
+      addMessage(role, content) {
+        if(this.el.messages.children.length===1 && this.el.messages.children[0].classList.contains('message-system')) {
+          this.el.messages.innerHTML = '';
+        }
+        const d = document.createElement('div');
+        d.className = 'msg ' + (role==='user' ? 'user' : (role==='assistant' ? 'bot' : 'bot message-system'));
+        const meta = document.createElement('div');
+        meta.className = 'msg.meta';
+        meta.textContent = role === 'user' ? 'You' : (role === 'assistant' ? 'Assistant' : 'System');
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'msg.content';
+        contentDiv.textContent = content;
+        d.appendChild(meta); d.appendChild(contentDiv);
+        this.el.messages.appendChild(d);
+        this.el.messages.scrollTop = this.el.messages.scrollHeight;
+        // update count
+        const count = this.el.messages.querySelectorAll('.msg').length;
+        this.el.msgCount.textContent = `Messages: ${count}`;
+      },
+
+      showTyping() { this.el.typing.style.display = 'block'; },
+      hideTyping() { this.el.typing.style.display = 'none'; },
+
+      async refreshStatus() {
+        const r = await api('/api/status');
+        if (r.json) {
+          const data = r.json;
+          this.el.modelStatus.textContent = data.model_loaded ? 'Ready' : (data.file_exists ? 'Loading' : 'Not found');
+          this.el.fileStatus.textContent = data.file_exists ? 'Found' : 'Not found';
+          this.el.sizeStatus.textContent = data.file_size || '-';
+          const ready = data.model_loaded === true;
+          this.el.input.disabled = !ready;
+          this.el.send.disabled = !ready;
+          if(!ready && data.error) {
+            this.addMessage('system', 'Error: ' + data.error);
+          }
+        }
+      },
+
+      async setPersona() {
+        const persona = this.el.personaInput.value.trim();
+        if(!persona) return alert('Enter a persona prompt first');
+        const r = await api('/api/persona', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ persona })});
+        if(r.ok) {
+          this.addMessage('system', 'Persona updated and chat history cleared.');
+          this.el.input.value = '';
+        } else {
+          this.addMessage('system', 'Failed to set persona: ' + (r.json.error || r.status));
+        }
+      },
+
+      async send() {
+        const text = this.el.input.value.trim();
+        if(!text) return;
+        this.addMessage('user', text);
+        this.el.input.value = '';
+        this.showTyping();
+        try {
+          const r = await api('/api/chat', { method: 'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ message: text }) });
+          this.hideTyping();
+          if(r.ok) {
+            const reply = r.json.reply || r.json?.error || 'No response';
+            this.addMessage('assistant', reply);
+          } else {
+            this.addMessage('system', 'Error: ' + (r.json.error || 'unknown'));
+          }
+        } catch(err) {
+          this.hideTyping();
+          this.addMessage('system', 'Network error: ' + err.message);
+        }
+      },
+
+      async clear() {
+        if(!confirm('Clear chat history?')) return;
+        await api('/api/clear', { method: 'POST' });
+        this.el.messages.innerHTML = '<div class="msg bot message-system"><div class="msg.meta">System</div><div class="small">Chat cleared.</div></div>';
+        this.el.msgCount.textContent = 'Messages: 0';
+      },
+
+      exportChat() {
+        const rows = Array.from(this.el.messages.children).map(node => {
+          const meta = node.querySelector('.msg.meta')?.textContent || '';
+          const content = node.querySelector('.msg.content')?.textContent || node.textContent || '';
+          return `${meta}\n${content}\n\n`;
+        }).join('');
+        const blob = new Blob([rows], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `chat-${new Date().toISOString().slice(0,10)}.txt`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      },
+
+      async loadHistory() {
+        try {
+          const r = await api('/api/history');
+          if(r.ok && Array.isArray(r.json.history)) {
+            this.el.messages.innerHTML = '';
+            r.json.history.forEach(m => this.addMessage(m.role, m.content));
+          }
+        } catch(e){ console.warn('load history error', e) }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', ()=>UI.init());
+  </script>
+</body>
+</html>
 
