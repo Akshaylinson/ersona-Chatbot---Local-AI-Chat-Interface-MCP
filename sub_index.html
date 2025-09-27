@@ -1,1 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Persona Chatbot (local model)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; background:#f3f4f6; margin:0; padding:20px; }
+    .card { background:white; padding:16px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.06); margin-bottom:12px; }
+    textarea { width:100%; min-height:90px; font-family: monospace; padding:8px }
+    button { padding:8px 14px; border-radius:6px; border:0; background:#2563eb; color:white; cursor:pointer }
+    .muted { color:#6b7280; font-size:13px }
+    .message { padding:10px; border-radius:6px; margin-bottom:8px; background:#eef2ff }
+    .message.user { background:#dbeafe; text-align:right }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Persona Chatbot (local model)</h2>
+    <div id="status" class="muted">Checking model status…</div>
+    <div style="margin-top:8px">
+      <button id="refresh">Refresh status</button>
+      <button id="clearChat" style="margin-left:8px">Clear chat</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label><strong>Persona (system prompt)</strong></label>
+    <textarea id="persona">You are a helpful assistant.</textarea>
+    <div style="margin-top:8px">
+      <button id="setPersona">Set Persona</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="chatWindow">
+      <div class="muted">Welcome. Set persona and ask something.</div>
+    </div>
+
+    <div style="margin-top:12px">
+      <textarea id="message" placeholder="Type your message"></textarea>
+      <div style="margin-top:6px">
+        <button id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function fetchStatus(){
+  const r = await fetch('/api/status');
+  const j = await r.json();
+  const s = document.getElementById('status');
+  if(j.file_exists){
+    s.innerHTML = `Model file: ${j.model_path} (${j.file_size}) — ${j.gpt4all_available ? 'gpt4all imported' : 'gpt4all NOT installed'}`;
+  } else {
+    s.innerHTML = `<span style="color:#b91c1c">Model file NOT found at ${j.model_path}</span>`;
+  }
+}
+document.getElementById('refresh').addEventListener('click', fetchStatus);
+document.getElementById('setPersona').addEventListener('click', async ()=>{
+  const persona = document.getElementById('persona').value;
+  const r = await fetch('/api/persona',{method:'POST',headers:{'content-type':'application/json'}, body: JSON.stringify({persona})});
+  const j = await r.json();
+  if(r.ok) {
+    appendSystem(`Persona updated.`);
+    document.getElementById('message').focus();
+  } else {
+    appendSystem('Error: '+(j.error||JSON.stringify(j)));
+  }
+});
+
+function appendUser(txt){
+  const d = document.createElement('div'); d.className='message user'; d.textContent = 'You: '+txt; document.getElementById('chatWindow').appendChild(d);
+}
+function appendBot(txt){
+  const d = document.createElement('div'); d.className='message'; d.textContent = 'Assistant: '+txt; document.getElementById('chatWindow').appendChild(d);
+}
+function appendSystem(txt){
+  const d = document.createElement('div'); d.className='muted'; d.textContent = txt; document.getElementById('chatWindow').appendChild(d);
+}
+
+document.getElementById('sendBtn').addEventListener('click', async ()=>{
+  const msg = document.getElementById('message').value.trim();
+  if(!msg) return;
+  appendUser(msg);
+  document.getElementById('message').value = '';
+  appendSystem('Thinking...');
+  try {
+    const r = await fetch('/api/chat',{method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({message: msg})});
+    const j = await r.json();
+    document.querySelectorAll('.muted').forEach(n=>{ if(n.textContent==='Thinking...') n.remove(); });
+    if(r.ok){
+      appendBot(j.reply);
+    } else {
+      appendSystem('Error: ' + (j.error || JSON.stringify(j)));
+    }
+  } catch (e){
+    appendSystem('Network error: '+e.message);
+  }
+});
+
+document.getElementById('clearChat').addEventListener('click', async ()=>{
+  await fetch('/api/clear',{method:'POST'});
+  document.getElementById('chatWindow').innerHTML = '<div class="muted">Chat cleared.</div>';
+});
+
+window.onload = fetchStatus;
+</script>
+</body>
+</html>
 
